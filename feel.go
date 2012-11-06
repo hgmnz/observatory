@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/bmizerany/pq"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,10 +12,8 @@ import (
 )
 
 func main() {
-	urls := []string{
-		"url1",
-		"url2",
-		"url3",
+	urls := [...]string{
+		"postgres://localhost/hgmnz?sslmode=disable",
 	}
 
 	for _, url := range urls {
@@ -32,17 +31,32 @@ func feel(databaseUrl string) {
 	dataSource, err := pq.ParseURL(databaseUrl)
 	if err != nil {
 		fmt.Printf("Unable to parse database url (%s)", databaseUrl)
-	} else {
-		db, err := sql.Open("postgres", dataSource)
+		panic(err)
+	}
+	u, err := url.Parse(databaseUrl)
+	if err != nil {
+		panic(err)
+	}
+	databaseName := u.Path[1:]
+	db, err := sql.Open("postgres", dataSource)
+	if err != nil {
+		fmt.Println("Unable to connect to database")
+	}
+
+	for {
+		row := db.QueryRow("SELECT count(*) from pg_stat_activity")
+		var count uint16
+		err = row.Scan(&count)
 		if err != nil {
-			fmt.Println("Unable to connect to database")
+			panic(err)
 		}
-		for {
-			row := db.QueryRow("SELECT count(*) from pg_stat_activity")
-			var count int
-			row.Scan(&count)
-			o := observation{connections: count, databaseUrl: databaseUrl, updatedAt: time.Now()}
-			o.persist()
+		row = db.QueryRow("SELECT pg_database_size($1)", databaseName)
+		var bytes uint64
+		err = row.Scan(&bytes)
+		if err != nil {
+			panic(err)
 		}
+		o := observation{connections: count, databaseUrl: databaseUrl, bytes: bytes, serviceAvailable: true, updatedAt: time.Now()}
+		o.persist()
 	}
 }
